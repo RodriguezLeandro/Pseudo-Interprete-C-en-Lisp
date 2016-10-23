@@ -1,0 +1,552 @@
+
+//La idea del interprete es que un usuario ingrese pseudocódico c en forma de listas, y pueda realizar lo que se requiere.
+
+//Vamos a necesitar, una lista que contenga el programa a ejecutar, una lista que contenga las entradas de datos, una lista que contenga la memoria del programa,
+//y una lista que contenga la salida del programa.
+
+//Ejemplo del programa que ejecutariamos.
+
+(run '( (int a = 2 b = 4 c = 3 d e f)
+		(int s = 1)
+		(main(
+				(printf (a + b))
+				(a = 20)
+				(printf (a + b))
+				(scanf (d))
+				(printf (d))
+
+				(if (d == 6)
+					(printf (d ++))
+				)
+				(else
+					(printf (a))
+				)
+
+				(while (d != 6) 
+					(
+						(printf (d))
+						(d --)
+					)
+				)
+			)
+		)
+	)
+
+	'(8)
+)
+
+
+//La funcion poner_en_memoria, recibe una lista que contiene variables y iguales y la memoria, y pone en la memoria todo, ej: (a = 2 b c d = 4 r g h k = 2)
+//Creo que es un sencillo append entre todas las listas, pero luego lo vemos.
+//Para mi esta funcion deberia verificar si el dato ingresado se encuentra entre {a,b,c,......,y,z} pero bueno.. luego lo podemos hacer.
+//Tambien podemos agregarle luego que eliminer repetidos, o que sobreescriba una variable si ya se encontraba con un valor.
+//Pero sobreescribir la variable podemos dejarselo a modificar variable, ya que se supone que las variables las estamos inicializando todas juntas.
+
+(defun poner_en_memoria (variables memoria)
+	(if (null variables)
+		memoria
+		(if (eq (cadr variables) '=)
+			(poner_en_memoria (cdddr variables) (append (cons (car variables) (cons (cadr variables) (cons (caddr variables) nil ) ) ) memoria)	)
+			(poner_en_memoria (cdr variables) (append (list (car variables)) memoria))
+		)
+	)
+)
+
+//La funcion run ejecuta el programa, primero carga en memoria todas las asignaciones y luego ejecuta el main mandandole la memoria.
+
+(defun run (programa entrada &optional (memoria nil))
+	(if (null programa)
+		'Programa_Vacio
+		(if (eq (caar programa) 'int)
+			(run (cdr programa) entrada (poner_en_memoria (cdar programa) memoria)) 
+			(if (eq (caar programa) 'main)
+				(ejecutar (cadar programa) entrada memoria)
+				'No_Hay_Main
+			)
+		)
+	)
+)
+
+//Creamos la funcion ejecutar, que sencillamente se encarga de ejecutar las instrucciones que tiene main("programa").
+
+//La funcion modificar_var_en_memoria se le ingresa un numero(ingresado por el usuario), una variable y una memoria.
+//Hay que buscar la variable existente en memoria y sobreescribirle el numero ingresado por el usuario.
+
+(defun modificar_var_en_memoria (numero variable memoria &optional (memoria_nueva nil))
+	(if (null memoria) 
+		memoria_nueva
+		(if (eq (cadr memoria) '=)
+			(if (eq (car memoria) variable)
+				(modificar_var_en_memoria numero variable (cdddr memoria) (append memoria_nueva (cons (car memoria) (cons (cadr memoria) (cons numero nil) ) ) ) )
+				(modificar_var_en_memoria numero variable (cdddr memoria) (append memoria_nueva	(cons (car memoria) (cons (cadr memoria) (cons (caddr memoria) nil)))))
+			)
+			(if (eq (car memoria) variable)
+				(modificar_var_en_memoria numero variable (cdr memoria) (append memoria_nueva (cons (car memoria) (cons '= (cons numero nil)))))
+				(modificar_var_en_memoria numero variable (cdr memoria) (append memoria_nueva (list (car memoria))) )
+			)
+		)
+	)
+)
+
+//La funcion conseguir_valor recibe una lista que contiene variables y operaciones entre ellas,
+//y utilizando la memoria se devuelve el valor que surge de las operaciones.
+
+//Para realizar esta funcion vamos a dividirla en dos partes, primero reemplazemos los valores que pueden tomar las variables por los valores que
+//encontramos en la memoria. Y luego, nos vamos a encargar de establecer prioridades en las operaciones, dependiendo de los operadores.
+
+//Entonces, la funcion valores_en_memoria va a recibir una lista con expresiones, y se va a encargar de asignarle su valor numerico a cada una.
+
+(defun valores_en_memoria (expresion memoria &optional (expresion_numerica nil))
+	(if (null expresion)
+		expresion_numerica
+		(if (numberp (car expresion))
+			(valores_en_memoria (cdr expresion) memoria (append expresion_numerica (list (car expresion))))
+			(if (pertenece (car expresion) '(+ - * / % > < >= <= == !=) )	
+				(valores_en_memoria (cdr expresion) memoria (append expresion_numerica (list (car expresion)) )	)
+				(valores_en_memoria (cdr expresion) memoria (append expresion_numerica (list (obtener_valor (car expresion) memoria))))
+			)
+		)
+	)
+)
+
+//La funcion obtener_valor va a recibir un atomo y la memoria, y devuelve el valor que corresponde al atomo segun la memoria.
+//De no contener ningun valor el atomo, se devuelve nil.(Esto quizas luego es conveniente cambiarlo.)
+
+(defun obtener_valor (atomo memoria)
+	(if (null memoria)
+		nil
+		(if (eq (cadr memoria) '=)
+			(if (eq (car memoria) atomo)
+				(caddr memoria)
+				(obtener_valor atomo (cdddr memoria))
+			)
+			(if (eq (car memoria) atomo)
+				nil
+				(obtener_valor atomo (cdr memoria))
+			)
+		)
+	)
+)
+
+//Entonces, en la funcion conseguir_valor, vamos a trabajar directamente con la variable auxiliar expresion_numerica que se trata de 
+//la funcion valores_en_memoria aplicada a la expresion ingresada anteriormente.
+
+//Ya tenemos una lista con los numeros y con las operaciones entonces, necesitamos implementar un algoritmo que nos permita
+//establecer prioridades en las operaciones, y ir realizando una a una las operaciones posibles.
+
+//Se me ocurre el siguiente algoritmo.
+//Recorrer toda la lista, buscando multiplicaciones o divisiones, si se encuentra alguna, resolverla, de lo contrario, seguir buscando.
+//Si ya no se puede resolver mas, realizar lo mismo pero con suma o resta, hasta finalizar.
+
+(defun conseguir_valor (expresion memoria)
+	(if (eq expresion nil)
+		nil
+		(if (tiene_comparacion expresion)
+			(realizar_operaciones_comparacion (conversion_exp_a_b(valores_en_memoria expresion memoria)))
+			(if (pertenece (cadr expresion) '(+ - * / %))
+				(realizar_operaciones (valores_en_memoria expresion memoria))
+				(if (eq (cadr expresion) nil)
+					(car (valores_en_memoria expresion memoria))						
+						(if (eq (cadr expresion) '=)
+							(conseguir_valor (cddr expresion) memoria)
+							'No_Se_Deberia_Llegar_Nunca_Hasta_Aca
+						)
+				)
+			)
+		)
+	)
+)
+
+//La funcion tiene_comparacion recibe una lista y se encarga de devolver true si hay un operador de comparacion.
+
+(defun tiene_comparacion (lista)
+	(if (null lista)
+		nil
+		(if (pertenece (car lista) '(< > <= >= != ==))
+			T
+			(tiene_comparacion (cdr lista))
+		)
+	)
+)
+
+//La funcion conversion_comp_a_b recibe una lista con una expresion a y una expresion b separadas por operadores > < >= <= != ==
+//y tiene que devolver una expresion numerica a seguida del operador en cuestion seguida de la expresion numerica b
+
+(defun conversion_exp_a_b (lista)
+	(list (realizar_operaciones (obtener_valor_a lista)) (obtener_operador_comparacion lista) (realizar_operaciones (obtener_valor_b lista)))
+)
+
+//La funcion obtener_valor_a se va a encargar de devolver una lista que contenga el valor de las expresiones anteriores al operador de comparacion.
+
+(defun obtener_valor_a (lista &optional (lista_auxiliar nil))
+	(if (null lista)
+		lista_auxiliar
+		(if (pertenece (car lista) '(> < != == >= <=))
+			(obtener_valor_a nil lista_auxiliar)
+			(obtener_valor_a (cdr lista) (append lista_auxiliar (list (car lista))))
+		)
+	)
+)
+
+
+//La funcion obtener_operador_comparacion se va a encargar de obtener el primer operador de comparacion que encuentre.
+
+(defun obtener_operador_comparacion (lista)
+	(if (null lista)
+		nil
+		(if (eq (car lista) '>)
+			'>
+			(if (eq (car lista) '<)
+				'<
+				(if (eq (car lista) '<=)
+					'<=
+					(if (eq (car lista) '>=)
+						'>=
+						(if (eq (car lista) '!=)
+							'!
+							(if (eq (car lista) '==)
+								'==
+								(obtener_operador_comparacion (cdr lista))
+							)
+						)
+					)
+				)
+			)
+		)
+	)
+)
+
+//La funcion obtener_valor_b se va a encargar de devolver una lista que contenga el valor de las expresiones posteriores al operador de comparacion.
+
+(defun obtener_valor_b (lista &optional (lista_auxiliar nil) (bol 0))
+	(if (null lista)
+		lista_auxiliar
+		(if (eq bol 0)
+			(if (pertenece (car lista) '(> < != == >= <=))
+				(obtener_valor_b (cdr lista) lista_auxiliar 1)
+				(obtener_valor_b (cdr lista) lista_auxiliar 0)
+			)
+			(obtener_valor_b (cdr lista) (append lista_auxiliar (list (car lista))) 1)
+		)
+	)
+)
+
+//Necesitamos realizar la funcion realizar_operaciones_comparacion la cual se encarga de realizar una comparacion del tipo a > < >= <= != == b
+
+(defun realizar_operaciones_comparacion (expresion)
+	(if (eq (cadr expresion) '<)
+		(if (< (car expresion) (caddr expresion))
+			0
+			nil
+		)
+		(if (eq (cadr expresion) '>)
+			(if (> (car expresion) (caddr expresion))
+				0
+				nil
+			)
+			(if (eq (cadr expresion) '>=)
+				(if (>= (car expresion) (caddr expresion))
+					0
+					nil
+				)
+				(if (eq (cadr expresion) '<=)
+					(if (<= (car expresion) (caddr expresion))
+						0
+						nil
+					)
+					(if (eq (cadr expresion) '==)
+						(if (eq (car expresion) (caddr expresion))
+							0
+							nil
+						)
+						(if (eq (cadr expresion) '!=)
+							(if (eq (car expresion) (caddr expresion))
+								nil
+								0
+							)
+							'No_Se_Deberia_Llegar_Nunca_Hasta_Aca
+						)
+					)
+				)
+			)
+		)
+	)
+)
+
+//La funcion realizar operaciones recibe una lista que contiene operaciones con numeros, debe devolver el resultado de las operaciones.
+//Para esto utilizaremos las operaciones basicas de multiplicacion, division, porcentaje, suma y resta.
+
+(defun realizar_operaciones (lista &optional (lista_auxiliar nil))
+	(if (null lista)
+		lista_auxiliar
+		(if (tiene_multiplicacion lista)
+			(realizar_operaciones (multiplicar lista))
+			(if (tiene_division lista)
+				(realizar_operaciones (dividir lista))
+				(if (tiene_porcentaje lista)
+					(realizar_operaciones (porcentaje lista))
+					(if (tiene_suma lista)
+						(realizar_operaciones (suma lista))
+						(if (tiene_resta lista)
+							(realizar_operaciones (resta lista))
+							(car lista)
+						)
+					)
+				)
+			)
+		)
+	)
+)
+
+//La funcion tiene_multiplicacion devuelve True si exite el signo * en la lista.
+(defun tiene_multiplicacion (lista)
+	(if (null lista)
+		nil
+		(if (eq (cadr lista) nil)
+			nil
+			(if (eq (cadr lista) '*)
+				T
+				(tiene_multiplicacion (cddr lista))
+			)
+		)
+	)
+)
+
+//La funcion tiene_division devuelve True si existe el signo / en la lista.
+(defun tiene_division (lista)
+	(if (null lista)
+		nil
+		(if (eq (cadr lista) nil)
+			nil
+			(if (eq (cadr lista) '/)
+				T
+				(tiene_division (cddr lista))
+			)
+		)
+	)
+)
+
+//La funcion tiene_porcentaje devuelve True si existe el signo % en la lista.
+(defun tiene_porcentaje (lista)
+	(if (null lista)
+		nil
+		(if (eq (cadr lista) nil)
+			nil
+			(if (eq (cadr lista) '%)
+				T
+				(tiene_porcentaje (cddr lista))
+			)
+		)
+	)
+)
+
+//La funcion tiene_suma devuelve True si existe el signo + en la lista.
+(defun tiene_suma (lista)
+	(if (null lista)
+		nil
+		(if (eq (cadr lista) nil)
+			nil
+			(if (eq (cadr lista) '+)
+				T
+				(tiene_suma (cddr lista))
+			)
+		)
+	)
+)
+
+//La funcion tiene_resta devuelve True si existe el signo - en la lista.
+(defun tiene_resta (lista)
+	(if (null lista)
+		nil
+		(if (eq (cadr lista) nil)
+			nil
+			(if (eq (cadr lista) '-)
+				T
+				(tiene_resta (cddr lista))
+			)
+		)
+	)
+)
+
+//La funcion multiplicar se encarga de realizar todas las multiplicaciones en la lista ingresada.
+(defun multiplicar (lista &optional (lista_auxiliar nil))
+	(if (null lista)
+		lista_auxiliar
+		(if (eq (cadr lista) nil)
+			(append lista_auxiliar (list (car lista)))
+			(if (eq (cadr lista) '*)
+				(multiplicar (append (list (* (car lista) (caddr lista))) (cdddr lista)) lista_auxiliar)
+				(multiplicar (cddr lista) (append lista_auxiliar (list (car lista) (cadr lista) )) )
+			)
+		)
+	)
+)
+
+//La funcion dividir se encarga de realizar todas las divisiones en la lista ingresada.
+(defun dividir (lista &optional (lista_auxiliar nil))
+	(if (null lista)
+		lista_auxiliar
+		(if (eq (cadr lista) nil)
+			(append lista_auxiliar (list (car lista)))
+			(if (eq (cadr lista) '/)
+				(dividir (append (list (/ (car lista) (caddr lista))) (cdddr lista)) lista_auxiliar)
+				(dividir (cddr lista) (append lista_auxiliar (list (car lista) (cadr lista) )) )
+			)
+		)
+	)
+)
+
+//La funcion porcentaje se encarga de realizar todas las divisiones en la lista ingresada.
+(defun porcentaje (lista &optional (lista_auxiliar nil))
+	(if (null lista)
+		lista_auxiliar
+		(if (eq (cadr lista) nil)
+			(append lista_auxiliar (list (car lista)))
+			(if (eq (cadr lista) '%)
+				(porcentaje (append (list (mod (car lista) (caddr lista))) (cdddr lista)) lista_auxiliar)
+				(porcentaje (cddr lista) (append lista_auxiliar (list (car lista) (cadr lista) )) )
+			)
+		)
+	)
+)
+
+//La funcion suma se encarga de realizar todas las divisiones en la lista ingresada.
+
+(defun suma (lista &optional (lista_auxiliar nil))
+	(if (null lista)
+		lista_auxiliar
+		(if (eq (cadr lista) nil)
+			(append lista_auxiliar (list (car lista)))
+			(if (eq (cadr lista) '+)
+				(suma (append (list (+ (car lista) (caddr lista))) (cdddr lista)) lista_auxiliar)
+				(suma (cddr lista) (append lista_auxiliar (list (car lista) (cadr lista) )) )
+			)
+		)
+	)
+)
+
+//La funcion resta se encarga de realizar todas las divisiones en la lista ingresada.
+
+(defun resta (lista &optional (lista_auxiliar nil))
+	(if (null lista)
+		lista_auxiliar
+		(if (eq (cadr lista) nil)
+			(append lista_auxiliar (list (car lista)))
+			(if (eq (cadr lista) '-)
+				(resta (append (list (- (car lista) (caddr lista))) (cdddr lista)) lista_auxiliar)
+				(resta (cddr lista) (append lista_auxiliar (list (car lista) (cadr lista) )) )
+			)
+		)
+	)
+)
+
+//La funcion es_variable recibe una expresion y la memoria, y dice si la expresion se encuentra incluida en la memoria. Tiene que ser una variable la expresion.
+
+(defun es_variable (expresion memoria)
+	(if (null memoria)
+		nil
+		(if (eq (cadr memoria) '=)
+			(if (eq expresion (car memoria))
+				T
+				(es_variable expresion (cdddr memoria))
+			)
+			(if (eq expresion (car memoria))
+				T
+				(es_variable expresion (cdr memoria))
+			)
+		)
+	)
+)
+
+//La funcion pertenece recibe un operador y dice si se encuentra en una lista de operadores o no.
+
+(defun pertenece (operador lista_operadores)
+	(if (null lista_operadores)
+		nil
+		(if (eq operador (car lista_operadores)) 
+			T
+			(pertenece operador (cdr lista_operadores))
+		)
+	)
+)
+
+//La funcion operador_ant_en_posterior recibe una lista cuyos primeros elementos estan formados por un operador ++ o -- seguidos de una variable,
+//y luego debe devolver una lista que contenga primero la variable y luego el operador, seguido de lo que le seguia a la lista original.
+//En otras palabras, una suerte de reverse.
+
+(defun operador_ant_en_posterior (lista_con_operadores &optional (lista_auxiliar_con_operadores nil))
+	(if (null lista_con_operadores)
+		lista_auxiliar_con_operadores
+		(if (or (eq (car lista_con_operadores) '++) (eq (car lista_con_operadores) '--))
+			(operador_ant_en_posterior (cddr lista_con_operadores) (append lista_auxiliar_con_operadores (cons (cadr lista_con_operadores) (cons (car lista_con_operadores) nil))) )
+			(operador_ant_en_posterior (cdr lista_con_operadores) (append lista_auxiliar_con_operadores (cons (car lista_con_operadores) nil)) )
+		)
+	)
+)
+
+//La funcion obtener_operador recibe una lista que contiene un operador de entre los siguientes: '(+= -= *= /= %=)
+//Y devuelve aquel operador que encuentra primero.
+//Solo debe devolver el operador unario.
+
+(defun obtener_operador (lista_operador)
+	(if (null lista_operador)
+		nil
+		(if (eq (car lista_operador) '+=)
+			'+
+			(if (eq (car lista_operador) '-=)
+				'-
+				(if (eq (car lista_operador) '*=)
+					'*
+					(if (eq (car lista_operador) '/=)
+						'/
+						(if (eq (car lista_operador) '%=)
+							'%
+							(obtener_operador (cdr lista_operador))
+						)
+					)
+				)
+			)
+		)
+	)
+)
+
+(defun ejecutar (programa entrada memoria &optional(salida nil))
+	(if (null programa) 
+		salida
+		(cond
+			((eq (caar programa) 'scanf )  (ejecutar (cdr programa) (cdr entrada) (modificar_var_en_memoria (car entrada) (caadar programa) memoria )salida))
+			((eq (caar programa) 'printf )  (ejecutar (cdr programa) entrada memoria (append salida (list (conseguir_valor (cadar programa) memoria))) ))
+			((es_variable (caar programa) memoria)
+				(if (eq (cadar programa) '=)
+					(ejecutar (cdr programa) entrada (modificar_var_en_memoria (conseguir_valor (cddar programa) memoria) (caar programa) memoria) salida)
+					(if (pertenece (cadar programa) '(+= -= *= /= %=)) 
+						(ejecutar (cons (list (caar programa) '= (caar programa) (obtener_operador (cdar programa)) (realizar_operaciones(valores_en_memoria(cddar programa) memoria))) (cdr programa)) entrada memoria salida)
+						(if (eq (cadar programa) '++)
+						(ejecutar (cons (list (caar programa) '= (caar programa) '+ '1) (cdr programa))entrada memoria salida)
+						(ejecutar (cons (list (caar programa) '= (caar programa) '- '1) (cdr programa))entrada memoria salida)
+						)
+					)
+				)
+			)
+			((pertenece (caar programa) '(++ --) )	(ejecutar (cons (operador_ant_en_posterior (car programa)) (cdr programa) ) entrada memoria salida))
+			((eq (caar programa) 'if)  		
+				(if (eq (conseguir_valor (cadar programa) memoria)	0) 
+					(if (eq (caadr programa) 'else)
+						(ejecutar (append (caddar programa) (cddr programa)) entrada memoria salida)
+						(ejecutar (append (caddar programa) (cdr programa)) entrada memoria salida)
+					)
+					(if (eq (caadr programa) 'else)
+						(ejecutar (append (cadadr programa) (cddr programa)) entrada memoria salida)
+						(ejecutar (cddr programa) entrada memoria salida)
+					)
+				)
+			)
+			((eq (caar programa) 'while)
+				(if (eq (conseguir_valor (cadar programa) memoria) 0)
+					(ejecutar (append (caddar programa) programa) entrada memoria salida)
+					(ejecutar (cdr programa) entrada memoria salida)
+				)
+			)
+		)
+	)
+)
